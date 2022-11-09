@@ -26,7 +26,20 @@ parser.add_argument('--profiles', action='store_true')
 parser.add_argument('--skipdefault', action='store_true')
 args = parser.parse_args()
 
-accountid = boto3.client('sts').get_caller_identity().get('Account')
+try:
+    accountid = boto3.client('sts').get_caller_identity().get('Account')
+except botocore.exceptions.ClientError as error:
+    print(error.response['Error'])
+    print('Exiting')
+    sys.exit(1)
+except botocore.exceptions.NoCredentialsError as error:
+    print(error)
+    print('Exiting')
+    sys.exit(1)
+except Exception as err:
+    print(f"Unexpected {err=}, {type(err)=}")
+    print('Exiting')
+    raise
 
 ec2_total = 0
 rds_total = 0
