@@ -4,7 +4,10 @@
 # - Does this need pagination?
 # - Need to get list of ELBv1?
 # x Org support
-# - Multi-account support via credentials file
+# x Multi-account support via credentials file
+# Compute support
+# Data security support
+# IAM calculation
 # - Save time by skipping disabled regions (https://stackoverflow.com/questions/56182935/how-to-identify-disabled-regions-in-aws)
 
 import datetime
@@ -92,6 +95,7 @@ def scan_account(assumedrole, credentials, accountid, session):
         except:
             rdsregions = session.get_available_regions('rds')
     for region in rdsregions:
+        instances = {'DBInstances': []}
         if assumedrole:
             rds = session.client('rds', region_name=region, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
         else:
@@ -106,8 +110,7 @@ def scan_account(assumedrole, credentials, accountid, session):
             continue
 
         # aws rds describe-db-instances --max-items 99999
-        for instance in instances['DBInstances']:
-            rds_account_total += 1
+        rds_account_total = len(instances['DBInstances'])
     if not args.nocsv:
         print('%s, RDS, %d' % (accountid, rds_account_total), file=f)
     print('%-*s\t%-*s\t%s' % (16, accountid, 10, 'RDS', rds_account_total))
@@ -123,8 +126,8 @@ def scan_account(assumedrole, credentials, accountid, session):
             natgwclient = session.client('ec2', region_name=region['RegionName'])
             natgw = session.resource('ec2', region_name=region['RegionName'])
         natgws = natgwclient.describe_nat_gateways()
-        for instance in natgws['NatGateways']:
-            natgw_account_total += 1
+        natgw_account_total = len(natgws['NatGateways'])
+
     if not args.nocsv:
         print('%s, NATGW, %d' % (accountid, natgw_account_total), file=f)
     print('%-*s\t%-*s\t%s' % (16, accountid, 10, 'NATGW', natgw_account_total))
@@ -137,8 +140,8 @@ def scan_account(assumedrole, credentials, accountid, session):
         else:
             redshift = session.client('redshift', region_name=region['RegionName'])
         clusters = redshift.describe_clusters()
-        for cluster in clusters['Clusters']:
-            redshift_account_total += 1
+        redshift_account_total = len(clusters['Clusters'])
+
     if not args.nocsv:
         print('%s, Redshift, %d' % (accountid, redshift_account_total), file=f)
     print('%-*s\t%-*s\t%s' % (16, accountid, 10, 'Redshift', redshift_account_total))
@@ -151,8 +154,8 @@ def scan_account(assumedrole, credentials, accountid, session):
         else: 
             elb = session.client('elbv2', region_name=region['RegionName'])
         lbs = elb.describe_load_balancers()
-        for lb in lbs['LoadBalancers']:
-            elb_account_total += 1
+        elb_account_total = len(lbs['LoadBalancers'])
+
     if not args.nocsv:
         print('%s, ELB, %d' % (accountid, elb_account_total), file=f)
     print('%-*s\t%-*s\t%s' % (16, accountid, 10, 'ELB', elb_account_total))
