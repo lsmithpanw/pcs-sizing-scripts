@@ -10,6 +10,8 @@
 import datetime
 import argparse
 import sys
+import os
+import configparser
 
 import botocore
 import boto3
@@ -20,6 +22,8 @@ print('Start time: %s' % starttime)
 parser = argparse.ArgumentParser()
 parser.add_argument('--nocsv', action='store_true')
 parser.add_argument('--awsorg', action='store_true')
+parser.add_argument('--profiles', action='store_true')
+parser.add_argument('--skipdefault', action='store_true')
 args = parser.parse_args()
 
 accountid = boto3.client('sts').get_caller_identity().get('Account')
@@ -30,6 +34,9 @@ natgw_total = 0
 redshift_total = 0
 elb_total = 0
 
+credentialsfile = os.path.expanduser('~/.aws/credentials')
+profileenvvar = 'AWS_PROFILE'
+
 f = None
 if not args.nocsv:
     outputfile = 'sizing.csv'
@@ -37,10 +44,7 @@ if not args.nocsv:
     print('Account ID, Service, Count', file=f)
 print('%-*s\t%-*s\t%s' % (16, 'Account ID', 10, 'Service', 'Count'))
 
-master_accountid = accountid
-org_accounts = {'Accounts': [{'Id':accountid}]}
-
-def scan_account(assumedrole, credentials, accountid):
+def scan_account(assumedrole, credentials, accountid, session):
     ec2_account_total = 0
     rds_account_total = 0
     natgw_account_total = 0
@@ -49,16 +53,16 @@ def scan_account(assumedrole, credentials, accountid):
 
     # Count EC2
     if assumedrole:
-        ec2client = boto3.client('ec2', aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+        ec2client = session.client('ec2', aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
     else:
-        ec2client = boto3.client('ec2')
+        ec2client = session.client('ec2')
     regions = ec2client.describe_regions()
 
     for region in regions['Regions']:
         if assumedrole:
-            ec2 = boto3.resource('ec2', region_name=region['RegionName'], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+            ec2 = session.resource('ec2', region_name=region['RegionName'], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
         else:
-            ec2 = boto3.resource('ec2', region_name=region['RegionName'])
+            ec2 = session.resource('ec2', region_name=region['RegionName'])
         # aws ec2 describe-instances --max-items 99999 --region="${1}" --filters "Name=instance-state-name,Values=running"
         for instance in ec2.instances.filter(Filters=[{'Name':'instance-state-name', 'Values':['running']}]):
             ec2_account_total += 1
@@ -68,14 +72,17 @@ def scan_account(assumedrole, credentials, accountid):
 
     # Count RDS
     if assumedrole:
-        rdsregions = boto3.Session(aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken']).get_available_regions('rds')
+        rdsregions = session.Session(aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken']).get_available_regions('rds')
     else:
-        rdsregions = boto3.Session().get_available_regions('rds')
+        try:
+            rdsregions = session.Session().get_available_regions('rds')
+        except:
+            rdsregions = session.get_available_regions('rds')
     for region in rdsregions:
         if assumedrole:
-            rds = boto3.client('rds', region_name=region, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+            rds = session.client('rds', region_name=region, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
         else:
-            rds = boto3.client('rds', region_name=region)
+            rds = session.client('rds', region_name=region)
         try:
             instances = rds.describe_db_instances()
         except botocore.exceptions.ClientError as error:
@@ -97,11 +104,11 @@ def scan_account(assumedrole, credentials, accountid):
 
     for region in regions['Regions']:
         if assumedrole:
-            natgwclient = boto3.client('ec2', aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
-            natgw = boto3.resource('ec2', region_name=region['RegionName'], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+            natgwclient = session.client('ec2', aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+            natgw = session.resource('ec2', region_name=region['RegionName'], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
         else:
-            natgwclient = boto3.client('ec2', region_name=region['RegionName'])
-            natgw = boto3.resource('ec2', region_name=region['RegionName'])
+            natgwclient = session.client('ec2', region_name=region['RegionName'])
+            natgw = session.resource('ec2', region_name=region['RegionName'])
         natgws = natgwclient.describe_nat_gateways()
         for instance in natgws['NatGateways']:
             natgw_account_total += 1
@@ -113,9 +120,9 @@ def scan_account(assumedrole, credentials, accountid):
     #aws redshift describe-clusters --max-items 99999
     for region in regions['Regions']:
         if assumedrole:
-            redshift = boto3.client('redshift', region_name=region['RegionName'], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+            redshift = session.client('redshift', region_name=region['RegionName'], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
         else:
-            redshift = boto3.client('redshift', region_name=region['RegionName'])
+            redshift = session.client('redshift', region_name=region['RegionName'])
         clusters = redshift.describe_clusters()
         for cluster in clusters['Clusters']:
             redshift_account_total += 1
@@ -127,9 +134,9 @@ def scan_account(assumedrole, credentials, accountid):
     # aws elb describe-load-balancers --max-items 99999
     for region in regions['Regions']:
         if assumedrole:
-            elb = boto3.client('elbv2', region_name=region['RegionName'], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+            elb = session.client('elbv2', region_name=region['RegionName'], aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
         else: 
-            elb = boto3.client('elbv2', region_name=region['RegionName'])
+            elb = session.client('elbv2', region_name=region['RegionName'])
         lbs = elb.describe_load_balancers()
         for lb in lbs['LoadBalancers']:
             elb_account_total += 1
@@ -138,20 +145,39 @@ def scan_account(assumedrole, credentials, accountid):
     print('%-*s\t%-*s\t%s' % (16, accountid, 10, 'ELB', elb_account_total))
     
     return ec2_account_total, rds_account_total, natgw_account_total, redshift_account_total, elb_account_total
+#
+# Main
+#
+
+master_accountid = accountid
+accounts = {'Accounts': [{'Id':accountid}]}
 
 if args.awsorg:
     try:
         client = boto3.client('organizations')
         org = client.describe_organization()
         master_accountid = org['Organization']['MasterAccountId']
-        org_accounts = client.list_accounts()
+        accounts = client.list_accounts()
     except Exception as error:
         print(error.response['Error'])
         print('Exiting')
         sys.exit(1)
+elif args.profiles:
+    accounts = {'Accounts': []}
+    profiles = boto3.session.Session().available_profiles
+    for profile in profiles:
+        accounts['Accounts'].append({'Id':profile})
 
-for account in org_accounts['Accounts']:
-    if account['Id'] != master_accountid:
+for account in accounts['Accounts']:
+    session = boto3
+    credentials = None
+    if args.profiles:
+        assumedrole = False
+        if args.skipdefault and account['Id'] == 'default':
+            print('Skipping default profile')
+            continue
+        session = boto3.session.Session(profile_name=account['Id'])
+    elif account['Id'] != master_accountid:
         assume_role_arn = "arn:aws:iam::%s:role/OrganizationAccountAccessRole" % account['Id']
         stsclient = boto3.client('sts')
         assumed_role_object = stsclient.assume_role(RoleArn=assume_role_arn, RoleSessionName="AssumeRoleSession1")
@@ -160,7 +186,7 @@ for account in org_accounts['Accounts']:
     else:
         assumedrole = False
         credentials = None
-    ec2_account_total, rds_account_total, natgw_account_total, redshift_account_total, elb_account_total = scan_account(assumedrole, credentials, account['Id'])
+    ec2_account_total, rds_account_total, natgw_account_total, redshift_account_total, elb_account_total = scan_account(assumedrole, credentials, account['Id'], session)
     ec2_total += ec2_account_total
     rds_total += rds_account_total
     natgw_total += natgw_account_total
