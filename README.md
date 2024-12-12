@@ -11,7 +11,7 @@ PDF licensing guide located here: [https://www.paloaltonetworks.com/resources/gu
 * [Azure](/azure)
 * [GCP](/gcp)
 * [OCI](/oci)
-* [Alibaba](/alibaba)
+* [Alibaba Cloud](/alibaba)
 
 ## Other Credit Usage:
 
